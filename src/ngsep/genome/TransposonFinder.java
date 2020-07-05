@@ -3,15 +3,18 @@ package ngsep.genome;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
+import java.io.PrintStream;
 import java.io.IOException;
+import java.util.Map;
+import java.util.List;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import ngsep.genome.io.SimpleGenomicRegionFileHandler;
 import ngsep.math.Distribution;
 import ngsep.sequences.UngappedSearchHit;
 import ngsep.sequences.QualifiedSequence;
+import ngsep.sequences.QualifiedSequenceList;
+import ngsep.sequences.io.FastaSequencesHandler;
+import ngsep.genome.io.SimpleGenomicRegionFileHandler;
 
 public class TransposonFinder {
 
@@ -43,6 +46,8 @@ public class TransposonFinder {
 
 	private boolean useGS;
 
+	private boolean useGSIndex;
+
 	public void run() throws IOException {
 
 		// Kmers per subsequence
@@ -67,23 +72,33 @@ public class TransposonFinder {
 				writer.newLine();
 			}
 		}
+		writer.close();
 		System.out.printf("Writing gt statistics on %s \n", "gt_" + filename);
+		QualifiedSequenceList gtTransposonList = new QualifiedSequenceList();
 		BufferedWriter w = new BufferedWriter(new FileWriter(new File("gt_" + filename)));
 		for(String actSeq : LTRs.keySet()) {
+			int i = 0;
 			for(Annotation ann : hitNumbers.get(actSeq)) {
 				System.out.printf("%s\t%d\t%d\t%d\t%f\n", actSeq, ann.first, ann.last, ann.maxHit, ann.medianHit);
 				w.write(String.format("%s\t%d\t%d\t%d\t%f", actSeq, ann.first, ann.last, ann.maxHit, ann.medianHit));
 				w.newLine();
+				CharSequence act_char_seq = this.genome.getReference(actSeq, ann.first, ann.last);
 				if(ann.maxHit <= 10){
-					CharSequence act_char_seq = this.genome.getReference(actSeq, ann.first, ann.last);
 					System.out.printf("Act seq: %s\n", act_char_seq.toString());
 					w.write(String.format("%s", act_char_seq.toString()));
 					w.newLine();
 				}
+				QualifiedSequence act_gt_transposon = new QualifiedSequence(actSeq + "_" + i, act_char_seq);
+				i ++;
+				gtTransposonList.add(act_gt_transposon);
 			}
 		}
-		writer.close();
 		w.close();
+		if(this.useGS){
+			FastaSequencesHandler outHandler = new FastaSequencesHandler();
+			PrintStream out = new PrintStream("fasta_gt_yeast.fa");
+			outHandler.saveSequences(gtTransposonList, out, 100);
+		}
 	}
 
 	private class Annotation {
@@ -165,7 +180,7 @@ public class TransposonFinder {
 				}
 			}
 			// If the kmer is more than the min hit size
-			if(hits.size() > minHitSize ) {
+			if(hits.size() >= minHitSize ) {
 				if(!seen) {
 					if(useSTRs && indexSTR < actSTRs.size()) {
 						GenomicRegion STR = actSTRs.get(indexSTR);
@@ -226,10 +241,11 @@ public class TransposonFinder {
 		}
 		// Put as "arguments" kmer length and min hit size
 		instance.lengthKmer = 20;
-		instance.minHitSize = 10;
+		instance.minHitSize = 1;
 		instance.transposons = new LinkedHashMap<>();
 		instance.hitNumbers = new LinkedHashMap<>();
-		instance.useGS = false;
+		// Load grountruth data for capturing statistics of it
+		instance.useGS = true;
 		if(instance.useGS){
 			SimpleGenomicRegionFileHandler gs_loader = new SimpleGenomicRegionFileHandler();
 			instance.goldStandard = gs_loader.loadRegionsAsMap(args[2]);
@@ -238,7 +254,14 @@ public class TransposonFinder {
 			instance.goldStandard = null;
 		}
 		// FM Index
-		instance.fm = new ReferenceGenomeFMIndex(instance.genome);
+		instance.useGSIndex = true;
+		if(instance.useGSIndex){
+			ReferenceGenome gsReference = new ReferenceGenome(args[3]);
+			instance.fm = new ReferenceGenomeFMIndex(gsReference);
+		}
+		else{
+			instance.fm = new ReferenceGenomeFMIndex(instance.genome);
+		}
 		// Find transposable elements
 		instance.run();
 		System.out.println("Total time consumed: " + (System.currentTimeMillis() - start));
